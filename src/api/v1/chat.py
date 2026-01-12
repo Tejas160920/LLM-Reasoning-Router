@@ -185,6 +185,7 @@ async def create_chat_completion_stream(
     routing_engine: RoutingEngineDep,
     llm_client: LLMClientDep,
     quality_checker: QualityCheckerDep,
+    metrics_service: MetricsServiceDep,
 ) -> StreamingResponse:
     """
     Create a streaming chat completion with intelligent model routing.
@@ -242,6 +243,8 @@ async def create_chat_completion_stream(
         # Stream LLM response
         full_text = ""
         final_usage = None
+        quality_result = None
+        start_time = datetime.now(timezone.utc)
         try:
             async for chunk in llm_client.generate_stream(
                 messages=messages,
@@ -266,6 +269,31 @@ async def create_chat_completion_stream(
                         "quality_score": quality_result.quality_score,
                     }
                     yield f"data: {json.dumps(done_data)}\n\n"
+
+                    # Log metrics to database
+                    try:
+                        from src.llm.schemas import ChatResponse, TokenUsage
+                        latency_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+                        response_obj = ChatResponse(
+                            id=f"stream-{start_time.timestamp()}",
+                            content=full_text,
+                            finish_reason=chunk.get("finish_reason", "stop"),
+                            usage=TokenUsage(
+                                prompt_tokens=final_usage.get("prompt_tokens", 0),
+                                completion_tokens=final_usage.get("completion_tokens", 0),
+                                total_tokens=final_usage.get("total_tokens", 0),
+                            ),
+                            latency_ms=latency_ms,
+                        )
+                        await metrics_service.log_request(
+                            prompt=user_prompt,
+                            analysis=analysis,
+                            routing=routing_decision,
+                            response=response_obj,
+                            quality=quality_result,
+                        )
+                    except Exception as log_error:
+                        print(f"Warning: Failed to log streaming metrics: {log_error}")
         except LLMError as e:
             error_data = {"type": "error", "message": e.message}
             yield f"data: {json.dumps(error_data)}\n\n"
