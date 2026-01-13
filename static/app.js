@@ -265,7 +265,8 @@ function updateSessionStats(analysis, usage) {
     statRequests.textContent = sessionStats.requests;
 
     const model = analysis.selected_model;
-    const isFast = model.includes('flash') && !model.includes('pro');
+    // Fast model is gemini-2.0-flash (not thinking, not pro)
+    const isFast = model.includes('flash') && !model.includes('thinking') && !model.includes('pro');
 
     if (isFast) {
         sessionStats.fast++;
@@ -318,7 +319,7 @@ function escapeHtml(text) {
 
 // Estimate cost
 function estimateCost(tokens, model) {
-    const isFast = model.includes('flash') && !model.includes('pro');
+    const isFast = model.includes('flash') && !model.includes('thinking') && !model.includes('pro');
     const rate = isFast ? 0.000375 : 0.00625;
     return (tokens / 1000) * rate;
 }
@@ -400,7 +401,8 @@ async function fetchMetrics() {
             const data = await response.json();
 
             const fastCount = data.requests_by_model['gemini-2.0-flash'] || 0;
-            const complexCount = data.requests_by_model['gemini-2.0-flash-thinking-exp'] || 0;
+            const complexCount = (data.requests_by_model['gemini-2.5-pro'] || 0) +
+                                 (data.requests_by_model['gemini-2.0-flash-thinking-exp'] || 0);
 
             sessionStats.requests = data.total_requests;
             sessionStats.fast = fastCount;
