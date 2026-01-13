@@ -130,9 +130,17 @@ async function sendRequest() {
                             analysisData = data;
                             updateAnalysisUI(data);
                         } else if (data.type === 'chunk') {
-                            fullResponse += data.content;
-                            contentEl.innerHTML = formatResponse(fullResponse);
-                            chatMessages.scrollTop = chatMessages.scrollHeight;
+                            // Add content with typing effect
+                            const chars = data.content.split('');
+                            for (let i = 0; i < chars.length; i++) {
+                                fullResponse += chars[i];
+                                // Update display every few characters for smooth effect
+                                if (i % 3 === 0 || i === chars.length - 1) {
+                                    contentEl.innerHTML = formatResponse(fullResponse);
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    await new Promise(r => setTimeout(r, 10));
+                                }
+                            }
                         } else if (data.type === 'done') {
                             usageData = data.usage;
                             if (data.quality_score !== undefined) {
