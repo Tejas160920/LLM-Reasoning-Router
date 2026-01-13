@@ -260,16 +260,7 @@ async def create_chat_completion_stream(
                     # Calculate quality score immediately
                     quality_result = quality_checker.check(full_text, analysis.complexity_score)
 
-                    # Send done with quality score included
-                    done_data = {
-                        "type": "done",
-                        "usage": final_usage,
-                        "finish_reason": chunk.get("finish_reason", "stop"),
-                        "quality_score": quality_result.quality_score,
-                    }
-                    yield f"data: {json.dumps(done_data)}\n\n"
-
-                    # Log metrics to database (create new session since request session is closed)
+                    # Log metrics to database BEFORE sending done (create new session)
                     try:
                         from src.db.session import async_session_factory
                         from src.llm.schemas import ChatResponse, TokenUsage
@@ -288,7 +279,6 @@ async def create_chat_completion_stream(
                             latency_ms=latency_ms,
                         )
 
-                        # Create a new session for logging (original session is closed after endpoint returns)
                         async with async_session_factory() as log_session:
                             log_metrics_service = MetricsService(log_session)
                             await log_metrics_service.log_request(
@@ -301,6 +291,15 @@ async def create_chat_completion_stream(
                             await log_session.commit()
                     except Exception as log_error:
                         print(f"Warning: Failed to log streaming metrics: {log_error}")
+
+                    # Send done with quality score included
+                    done_data = {
+                        "type": "done",
+                        "usage": final_usage,
+                        "finish_reason": chunk.get("finish_reason", "stop"),
+                        "quality_score": quality_result.quality_score,
+                    }
+                    yield f"data: {json.dumps(done_data)}\n\n"
         except LLMError as e:
             error_data = {"type": "error", "message": e.message}
             yield f"data: {json.dumps(error_data)}\n\n"
