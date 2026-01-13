@@ -91,7 +91,7 @@ async function sendRequest() {
     const startTime = Date.now();
 
     try {
-        const response = await fetch('/v1/chat/completions', {
+        const response = await fetch('/v1/chat/completions/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -105,38 +105,55 @@ async function sendRequest() {
             throw new Error(error.detail || 'Request failed');
         }
 
-        const data = await response.json();
-
-        // Remove typing indicator and add assistant message
+        // Remove typing indicator and add assistant message container
         removeTypingIndicator(typingId);
-        const messageEl = addMessage(data.choices[0].message.content, 'assistant');
+        const messageEl = addMessage('', 'assistant');
+        const contentEl = messageEl.querySelector('.message-content');
 
-        // Update analysis UI if routing_info is included
-        if (data.routing_info) {
-            analysisData = {
-                complexity_score: data.routing_info.complexity_score,
-                complexity_level: data.routing_info.complexity_level,
-                selected_model: data.routing_info.final_model,
-                model_tier: data.routing_info.final_model.includes('flash') && !data.routing_info.final_model.includes('thinking') ? 'fast' : 'complex',
-                reasoning: data.routing_info.routing_reasoning,
-                detected_signals: []
-            };
-            updateAnalysisUI(analysisData);
+        // Read SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-            if (data.routing_info.quality_score !== undefined) {
-                updateQualityUI(data.routing_info.quality_score);
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const text = decoder.decode(value);
+            const lines = text.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+
+                        if (data.type === 'analysis') {
+                            analysisData = data;
+                            updateAnalysisUI(data);
+                        } else if (data.type === 'chunk') {
+                            fullResponse += data.content;
+                            contentEl.innerHTML = formatResponse(fullResponse);
+                            chatMessages.scrollTop = chatMessages.scrollHeight;
+                        } else if (data.type === 'done') {
+                            usageData = data.usage;
+                            if (data.quality_score !== undefined) {
+                                updateQualityUI(data.quality_score);
+                            }
+                        } else if (data.type === 'error') {
+                            throw new Error(data.message);
+                        }
+                    } catch (parseError) {
+                        // Ignore parse errors for incomplete chunks
+                    }
+                }
             }
         }
 
-        // Update stats
+        // Update final stats
         const latency = Date.now() - startTime;
-        usageData = data.usage;
-        if (usageData) {
-            updateMetaDisplay(latency, usageData.total_tokens, data.model);
+        if (usageData && analysisData) {
+            updateMetaDisplay(latency, usageData.total_tokens, analysisData.selected_model);
+            updateSessionStats(analysisData, usageData);
         }
-
-        // Fetch fresh metrics from database to update all stats
-        await fetchMetrics();
 
     } catch (error) {
         removeTypingIndicator(typingId);
