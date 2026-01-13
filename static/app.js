@@ -133,8 +133,10 @@ async function sendRequest() {
         usageData = data.usage;
         if (usageData) {
             updateMetaDisplay(latency, usageData.total_tokens, data.model);
-            updateSessionStats({ selected_model: data.model }, usageData);
         }
+
+        // Fetch fresh metrics from database to update all stats
+        await fetchMetrics();
 
     } catch (error) {
         removeTypingIndicator(typingId);
