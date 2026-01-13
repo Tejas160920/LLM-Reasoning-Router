@@ -25,8 +25,10 @@ from src.dependencies import (
     QualityCheckerDep,
     RoutingEngineDep,
 )
+from src.db.session import async_session_factory
 from src.llm.exceptions import LLMError
-from src.llm.schemas import Message
+from src.llm.schemas import ChatResponse, Message, TokenUsage
+from src.metrics.service import MetricsService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -262,10 +264,6 @@ async def create_chat_completion_stream(
 
                     # Log metrics to database BEFORE sending done (create new session)
                     try:
-                        from src.db.session import async_session_factory
-                        from src.llm.schemas import ChatResponse, TokenUsage
-                        from src.metrics.service import MetricsService
-
                         latency_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
                         response_obj = ChatResponse(
                             id=f"stream-{start_time.timestamp()}",
@@ -290,7 +288,9 @@ async def create_chat_completion_stream(
                             )
                             await log_session.commit()
                     except Exception as log_error:
+                        import traceback
                         print(f"Warning: Failed to log streaming metrics: {log_error}")
+                        traceback.print_exc()
 
                     # Send done with quality score included
                     done_data = {
