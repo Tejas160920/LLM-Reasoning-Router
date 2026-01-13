@@ -185,7 +185,6 @@ async def create_chat_completion_stream(
     routing_engine: RoutingEngineDep,
     llm_client: LLMClientDep,
     quality_checker: QualityCheckerDep,
-    metrics_service: MetricsServiceDep,
 ) -> StreamingResponse:
     """
     Create a streaming chat completion with intelligent model routing.
@@ -270,9 +269,12 @@ async def create_chat_completion_stream(
                     }
                     yield f"data: {json.dumps(done_data)}\n\n"
 
-                    # Log metrics to database
+                    # Log metrics to database (create new session since request session is closed)
                     try:
+                        from src.db.session import async_session_factory
                         from src.llm.schemas import ChatResponse, TokenUsage
+                        from src.metrics.service import MetricsService
+
                         latency_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
                         response_obj = ChatResponse(
                             id=f"stream-{start_time.timestamp()}",
@@ -285,13 +287,18 @@ async def create_chat_completion_stream(
                             ),
                             latency_ms=latency_ms,
                         )
-                        await metrics_service.log_request(
-                            prompt=user_prompt,
-                            analysis=analysis,
-                            routing=routing_decision,
-                            response=response_obj,
-                            quality=quality_result,
-                        )
+
+                        # Create a new session for logging (original session is closed after endpoint returns)
+                        async with async_session_factory() as log_session:
+                            log_metrics_service = MetricsService(log_session)
+                            await log_metrics_service.log_request(
+                                prompt=user_prompt,
+                                analysis=analysis,
+                                routing=routing_decision,
+                                response=response_obj,
+                                quality=quality_result,
+                            )
+                            await log_session.commit()
                     except Exception as log_error:
                         print(f"Warning: Failed to log streaming metrics: {log_error}")
         except LLMError as e:
